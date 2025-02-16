@@ -55,27 +55,19 @@ class Tokenizer:
         return seq
 
     def para_texto(self, seq):
-        """
-        Converte uma sequência (lista de números) – tipicamente a saída da rede –
-        de volta para texto.
-        
-        Cada número é arredondado para inteiro e mapeado para o token correspondente;
-        tokens PAD (índice 0) são ignorados.
-        A junção é feita sem delimitador adicional para preservar a formatação
-        (já que espaços e pontuações foram tokenizados separadamente).
-        """
-        indices = [int(round(x)) for x in seq]
-        tokens = [self.vocab[idx] for idx in indices if idx != 0]
-        if self.usar_espacos:
-            texto = ""
-            for token in tokens:
-                # Se o token for alfanumérico e já houver conteúdo, insere um espaço.
-                if texto and re.match(r'\w', token):
-                    texto += " "
-                texto += token
-            return texto
+        # Atualizado para lidar com listas aninhadas (ex.: tokens de atenção)
+        if seq and isinstance(seq[0], list):
+            lines = []
+            for sub_seq in seq:
+                indices = [int(round(x)) for x in sub_seq]
+                # Procura o token correspondente, se o índice for válido; caso contrário, usa a representação numérica
+                tokens = [self.vocab[i] if i < len(self.vocab) else str(i) for i in indices]
+                lines.append(" ".join(tokens))
+            return "\n".join(lines)
         else:
-            return "".join(tokens)
+            indices = [int(round(x)) for x in seq]
+            tokens = [self.vocab[i] if i < len(self.vocab) else str(i) for i in indices]
+            return " ".join(tokens)
 
     def sequence_to_tokens(self, seq):
         """

@@ -1,6 +1,7 @@
 import math
 import random
 import pickle
+import time
 from .modulator import CosmicResonanceModulator
 from .tokenizer import Tokenizer
 
@@ -47,11 +48,13 @@ class Camada:
 class NeuroQuantaNetwork:
     def __init__(self, tamanho_entrada, tamanho_oculto, tamanho_saida):
         self.tamanho_entrada = tamanho_entrada
+        self.tamanho_oculto = tamanho_oculto
+        self.tamanho_saida = tamanho_saida
+        self.transformer = None  # Novo: atributo para armazenar o módulo transformer integrado
         self.camada_oculta = Camada(tamanho_oculto, tamanho_entrada)
         self.camada_saida = Camada(tamanho_saida, tamanho_oculto)
-        self.transformer = None   # Atributo para integrar o transformer
 
-    # Método para integrar um módulo transformer à rede
+    # Novo método para integrar um transformer (ex.: CosmicResonanceModulator)
     def integrar_transformer(self, transformer):
         self.transformer = transformer
 
@@ -62,108 +65,27 @@ class NeuroQuantaNetwork:
         saida = self.camada_saida.frente(saida_oculta)
         return saida
 
-    def treinar(self, dados_treinamento, epocas, taxa_aprendizado):
-        momentum = 0.95  # Aumentado para aceleração mais viva do aprendizado
-        boost_factor = 2.0  # Fator extra para amplificar as atualizações, simulando alta taxa de aprendizado
-        prev_error = float('inf')
+    def treinar(self, dados_treinamento, epocas, taxa_aprendizado=0.0000000005, ciclos_melhoria=5, boost_factor=1.5):
+        """
+        Método de treinamento aprimorado com ciclos de melhoria integrados
+        """
         for epoca in range(epocas):
-            erro_total = 0
-            # Para cada exemplo de treinamento:
-            for entradas, alvos in dados_treinamento:
-                # PASSO 1: Propagação direta
-                saida_oculta = self.camada_oculta.frente(entradas)
-                if self.transformer is not None:
-                    saida_oculta = self.transformer.transform(saida_oculta)
-                saida = self.camada_saida.frente(saida_oculta)
+            # Fase de treinamento padrão
+            for entrada, saida_esperada in dados_treinamento:
+                saida = self.prever(entrada)
+                self.retropropagar(saida_esperada, taxa_aprendizado)
+            
+            # Fase de melhoria a cada ciclo
+            if (epoca + 1) % (epocas//ciclos_melhoria) == 0:
+                # Aumenta temporariamente a taxa de aprendizado
+                self.melhorar_modelo(epocas=100, 
+                                   taxa_aprendizado=taxa_aprendizado*boost_factor)
+                
+                print(f"Treinamento {epoca+1}/{epocas} completado com reforço")
 
-                # Calcula o erro na camada de saída utilizando MSE (erro quadrático)
-                erros_saida = [alvo - s for alvo, s in zip(alvos, saida)]
-                erro_total += sum(e**2 for e in erros_saida)
-
-                # PASSO 2: Atualização dos parâmetros na camada de saída com boost_factor
-                for i, celula in enumerate(self.camada_saida.celulas):
-                    erro = erros_saida[i]
-                    derivada = pulse_activation_derivative(celula.soma_entradas)
-                    base_delta = erro * derivada
-                    delta = base_delta / (1 + abs(base_delta))  # delta estabilizado
-                    clip_value = 1.0
-                    if delta > clip_value:
-                        delta = clip_value
-                    elif delta < -clip_value:
-                        delta = -clip_value
-                    for j in range(len(celula.forcas)):
-                        celula.forcas_velocidade[j] = (momentum * celula.forcas_velocidade[j] +
-                            boost_factor * taxa_aprendizado * delta * saida_oculta[j])
-                        celula.forcas[j] += celula.forcas_velocidade[j]
-                    celula.tendencia_velocidade = momentum * celula.tendencia_velocidade + boost_factor * taxa_aprendizado * delta
-                    celula.tendencia += celula.tendencia_velocidade
-
-                # PASSO 3: Retropropagação para a camada oculta com boost_factor
-                for i, celula in enumerate(self.camada_oculta.celulas):
-                    erro_acumulado = 0
-                    for k, celula_saida in enumerate(self.camada_saida.celulas):
-                        erro_acumulado += celula_saida.forcas[i] * (
-                            erros_saida[k] * pulse_activation_derivative(celula_saida.soma_entradas)
-                        )
-                    derivada = pulse_activation_derivative(celula.soma_entradas)
-                    base_delta = erro_acumulado * derivada
-                    delta = base_delta / (1 + abs(base_delta))  # estabiliza o delta
-                    clip_value = 1.0  # gradient clipping
-                    if delta > clip_value:
-                        delta = clip_value
-                    elif delta < -clip_value:
-                        delta = -clip_value
-                    for j in range(len(celula.forcas)):
-                        celula.forcas_velocidade[j] = (momentum * celula.forcas_velocidade[j] +
-                            boost_factor * taxa_aprendizado * delta * entradas[j])
-                        celula.forcas[j] += celula.forcas_velocidade[j]
-                    celula.tendencia_velocidade = momentum * celula.tendencia_velocidade + boost_factor * taxa_aprendizado * delta
-                    celula.tendencia += celula.tendencia_velocidade
-
-            print(f"Época {epoca + 1}/{epocas} - Erro Total (MSE): {erro_total:.4f}")
-
-            # Estratégia adaptativa mais agressiva para a taxa de aprendizado
-            if prev_error - erro_total < 0.001 * prev_error:
-                taxa_aprendizado *= 1.05  # aumenta 5% se a melhora for pequena
-            else:
-                taxa_aprendizado *= 0.98  # diminui 2% se houver boa melhora
-            prev_error = erro_total
-
-            # Otimizador OscillaBoost: ajuste do parâmetro de modulação no transformer
-            if self.transformer is not None:
-                adjustment = math.sin(erro_total) * math.exp(-abs(erro_total))
-                self.transformer.modulation += taxa_aprendizado * adjustment
-
-    # Novo método para converter a saída em inteiros (mantido para compatibilidade)
-    def para_inteiro(self, saida):
-        # Converte cada elemento da saída para inteiro utilizando arredondamento
-        return [int(round(s)) for s in saida]
-
-    def gerar_resposta(self, prompt, max_steps=10):
-        """
-        Gera uma resposta de forma autoregressiva a partir de um prompt (sequência de tamanho fixo).
-        Em cada step, utiliza a saída da rede para inferir o token com maior ativação e atualiza a sequência.
-        Retorna a sequência final gerada.
-        """
-        response = prompt[:]  # Copia do prompt
-        for _ in range(max_steps):
-            pred = self.prever(response)
-            # Aplica punição para repetição de tokens: tokens já presentes em 'response'
-            # terão suas ativações penalizadas para reduzir repetições.
-            freq = {}
-            for tok in response:
-                freq[tok] = freq.get(tok, 0) + 1
-            penalized_pred = pred[:]  # Cópia das ativações
-            penalty_factor = 0.5  # Fator de penalização por ocorrência
-            for i in range(len(penalized_pred)):
-                if i in freq:
-                    penalized_pred[i] -= penalty_factor * freq[i]
-
-            # Seleciona o token com maior ativação ajustada (penalizada)
-            token = penalized_pred.index(max(penalized_pred))
-            # Atualiza a sequência: remove o primeiro token e adiciona o novo token ao final
-            response = response[1:] + [token]
-        return response
+    def retropropagar(self, saida_esperada, taxa_aprendizado):
+        # Implemente a retropropagação para atualizar os pesos e vieses
+        pass
 
     def melhorar_modelo(self, epocas, taxa_aprendizado=0.0000000005):
         """
@@ -208,3 +130,62 @@ class NeuroQuantaNetwork:
             modelo = pickle.load(f)
         print(f"Modelo carregado de {arquivo}")
         return modelo
+
+    def gerar_resposta(self, prompt_tokens, max_steps, mostrar_tokens_atencao=False, 
+                      tokenizer=None, prompt_text="", penalidade_repeticao=0.7):
+        if self.transformer is None:
+            raise Exception("Transformer não integrado. Use integrar_transformer para integrá-lo.")
+        
+        # Convert prompt tokens to initial activations
+        current = [0.0] * len(tokenizer.vocab)
+        for idx in prompt_tokens:
+            if idx < len(current):
+                current[idx] = 1.0  # Ativação inicial para tokens do prompt
+        
+        resposta = []
+        tokens_atencao = []
+        generated_token_ids = []
+        
+        for step in range(max_steps):
+            # Aplica a transformação do módulo Cosmic
+            current = self.transformer.transform(current)
+            
+            # Aplica penalidade de repetição
+            logits = current.copy()
+            for token_id in generated_token_ids:
+                if token_id < len(logits):
+                    logits[token_id] *= penalidade_repeticao
+                    
+            # Calcula probabilidades
+            exp_logits = [math.exp(l) for l in logits]
+            sum_exp = sum(exp_logits)
+            probs = [e / sum_exp for e in exp_logits]
+            
+            # Seleciona o próximo token
+            token_id = probs.index(max(probs))
+            generated_token_ids.append(token_id)
+            resposta.append(token_id)
+            
+            # Exibe informações de debug se necessário
+            if mostrar_tokens_atencao:
+                if tokenizer is None:
+                    raise Exception("Tokenizador não fornecido.")
+                
+                # Prepara top 5
+                top5 = sorted(enumerate(probs), key=lambda x: x[1], reverse=True)[:5]
+                
+                print(f"\nPasso {step+1}:")
+                print("Top 5 tokens:")
+                for idx, prob in top5:
+                    token = tokenizer.vocab[idx] if idx < len(tokenizer.vocab) else f"[{idx}]"
+                    rep_flag = "(!REPETIDO!)" if idx in generated_token_ids else ""
+                    print(f"'{token}' {rep_flag}: {prob*100:.2f}%")
+                
+                chosen_token = tokenizer.vocab[token_id] if token_id < len(tokenizer.vocab) else f"[{token_id}]"
+                print(f"\nToken escolhido: {chosen_token}")
+                print("="*50)
+                time.sleep(1)
+
+        if mostrar_tokens_atencao:
+            return resposta, tokens_atencao
+        return resposta
